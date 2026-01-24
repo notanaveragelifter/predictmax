@@ -1,10 +1,10 @@
-# PredictMax 🚀
+# PredictMax 
 
 PredictMax is an elite AI agent specialized in prediction market analysis and optimization. Built as a sophisticated financial intelligence layer, it helps traders discover, analyze, and execute opportunities across Kalshi, Polymarket, and the broader Solana ecosystem.
 
 ---
 
-## 🏛 Architecture Overview
+##  Architecture Overview
 
 PredictMax is built on a modular NestJS architecture designed for real-time data ingestion and AI-powered analysis.
 
@@ -39,7 +39,7 @@ graph TB
 
 ---
 
-## 🧠 Agent Workflow & Decision Tree
+##  Agent Workflow & Decision Tree
 
 PredictMax follows a strict intelligence gathering and analysis loop to ensure data-driven responses.
 
@@ -62,7 +62,7 @@ Claude 3.5 Sonnet processes the raw market data (Order books, Volume, End dates)
 
 ---
 
-## ✨ Key Features
+##  Key Features
 
 - **Real-time Chat**: WebSocket-based interactive agent with "typing" state and session persistence.
 - **Unified Discovery**: Cross-platform search for Kalshi and Polymarket in one request.
@@ -72,7 +72,7 @@ Claude 3.5 Sonnet processes the raw market data (Order books, Volume, End dates)
 
 ---
 
-## 🛠 Tech Stack
+##  Tech Stack
 
 - **Framework**: [NestJS](https://nestjs.com/) (Node.js)
 - **AI Model**: Claude 3.5 Sonnet (Anthropic SDK)
@@ -82,7 +82,7 @@ Claude 3.5 Sonnet processes the raw market data (Order books, Volume, End dates)
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### 1. Prerequisites
 - Node.js (v18+)
@@ -122,7 +122,7 @@ npm run start:prod
 
 ---
 
-## 📡 API Reference
+##  API Reference
 
 ### REST Endpoints
 - `GET /api/markets` - List unified markets.
@@ -137,5 +137,5 @@ npm run start:prod
 
 ---
 
-## ⚠️ Risk Disclaimer
+##  Risk Disclaimer
 Prediction markets involve substantial risk. PredictMax provides data-driven analysis for informational purposes only. Past market behavior does not guarantee future results.
