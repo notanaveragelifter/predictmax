@@ -1,98 +1,141 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# PredictMax 🚀
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+PredictMax is an elite AI agent specialized in prediction market analysis and optimization. Built as a sophisticated financial intelligence layer, it helps traders discover, analyze, and execute opportunities across Kalshi, Polymarket, and the broader Solana ecosystem.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+---
 
-## Description
+## 🏛 Architecture Overview
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+PredictMax is built on a modular NestJS architecture designed for real-time data ingestion and AI-powered analysis.
 
-## Project setup
-
-```bash
-$ npm install
+```mermaid
+graph TB
+    subgraph Client["Client Interface"]
+        WS["WebSocket (Chat)"]
+        REST["REST API"]
+    end
+    
+    subgraph Core["NestJS Backend"]
+        ChatGW["Chat Gateway<br/>(Real-time Context)"]
+        MarketSvc["Market Intelligence<br/>Service"]
+        AISvc["Claude AI Service<br/>(Logical Layer)"]
+        SupaSvc["Database Service<br/>(Supabase)"]
+    end
+    
+    subgraph Integrations["Platform APIs"]
+        Kalshi["Kalshi V2 API"]
+        Poly["Polymarket CLOB"]
+        Helius["Helius Solana RPC"]
+    end
+    
+    WS --> ChatGW
+    REST --> MarketSvc
+    ChatGW --> AISvc
+    ChatGW --> MarketSvc
+    AISvc --> MarketSvc
+    MarketSvc --> Integrations
+    MarketSvc --> SupaSvc
 ```
 
-## Compile and run the project
+---
 
+## 🧠 Agent Workflow & Decision Tree
+
+PredictMax follows a strict intelligence gathering and analysis loop to ensure data-driven responses.
+
+### 1. Intent Identification
+When a user interacts, the agent categorizes the request:
+- **Market Discovery**: "Find me crypto markets..."
+- **Risk Analysis**: "Analyze the spread on this NBA market..."
+- **Comparative Intelligence**: "Polymarket vs Kalshi for Fed rates?"
+
+### 2. Contextual Data Ingestion
+The agent proactively fetches real-time data based on the identified category.
+- **Sports/Politics/Crypto**: Specific platform queries.
+- **Trending**: High-volume market aggregation.
+
+### 3. AI Analytical Layer
+Claude 3.5 Sonnet processes the raw market data (Order books, Volume, End dates) through specialized prompts:
+- **Implied Probability Calculation**
+- **Liquidity Risk Assessment**
+- **Opportunity Scoring (1-100)**
+
+---
+
+## ✨ Key Features
+
+- **Real-time Chat**: WebSocket-based interactive agent with "typing" state and session persistence.
+- **Unified Discovery**: Cross-platform search for Kalshi and Polymarket in one request.
+- **Market Analysis**: Deep-dive analysis into spreads, volume efficiency, and outcome factors.
+- **Solana Integration**: Powered by Helius for real-time Solana blockchain data.
+- **Deterministic Cleanup**: Professional, emoji-free financial reporting.
+
+---
+
+## 🛠 Tech Stack
+
+- **Framework**: [NestJS](https://nestjs.com/) (Node.js)
+- **AI Model**: Claude 3.5 Sonnet (Anthropic SDK)
+- **Database**: [Supabase](https://supabase.com/) (PostgreSQL)
+- **Real-time**: Socket.io
+- **Integrations**: Axios for Platform APIs, Helius SDK for Solana.
+
+---
+
+## 🚀 Getting Started
+
+### 1. Prerequisites
+- Node.js (v18+)
+- Supabase Project
+- API Keys (Anthropic, Kalshi, Polymarket, Helius)
+
+### 2. Installation
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+git clone https://github.com/notanaveragelifter/predictmax.git
+cd predictmax
+npm install
 ```
 
-## Run tests
-
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+### 3. Configuration
+Copy the `.env.example` to `.env` and fill in your keys:
+```env
+ANTHROPIC_API_KEY=sk-ant-xxx
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+KALSHI_API_KEY=xxx
+POLYMARKET_API_KEY=xxx
+HELIUS_API_KEY=xxx
 ```
 
-## Deployment
+### 4. Database Setup
+Execute the SQL found in [`supabase-schema.sql`](./supabase-schema.sql) in your Supabase SQL editor.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
+### 5. Run the Agent
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+# Development mode
+npm run start:dev
+
+# Production build
+npm run build
+npm run start:prod
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## 📡 API Reference
 
-Check out a few resources that may come in handy when working with NestJS:
+### REST Endpoints
+- `GET /api/markets` - List unified markets.
+- `GET /api/markets/trending` - High-volume opportunities.
+- `GET /api/markets/discover` - AI-powered discovery analysis.
+- `GET /api/markets/analyze/:platform/:id` - Detailed technical score.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### WebSocket (ws://localhost:3000/chat)
+- `message`: Send user prompts.
+- `message_response`: Receive AI intelligence.
+- `assistant_typing`: UI state indicator.
 
-## Support
+---
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## ⚠️ Risk Disclaimer
+Prediction markets involve substantial risk. PredictMax provides data-driven analysis for informational purposes only. Past market behavior does not guarantee future results.
