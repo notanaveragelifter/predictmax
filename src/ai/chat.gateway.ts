@@ -129,21 +129,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 marketContext = await this.marketService.getMarketsForAIContext(10);
             }
 
-            // Get AI response
+            // Get AI response (tool calling handles market data fetching internally)
             const response = await this.aiService.chat(
                 content,
                 conversationId,
                 userId,
-                marketContext.map(m => ({
-                    platform: m.platform,
-                    marketId: m.marketId,
-                    question: m.question,
-                    yesPrice: m.yesPrice,
-                    noPrice: m.noPrice,
-                    volume: m.volume,
-                    endDate: m.endDate,
-                    category: m.category,
-                })),
             );
 
             // Emit response

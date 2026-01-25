@@ -56,19 +56,21 @@ export class MarketService {
     ): Promise<NormalizedMarket[]> {
         const { platform = 'all', limit = 50 } = filters;
 
-        let markets: NormalizedMarket[] = [];
-
         try {
-            // Fetch from platforms based on filter
+            // Fetch from platforms in parallel
+            const promises: Promise<NormalizedMarket[]>[] = [];
+
             if (platform === 'all' || platform === 'kalshi') {
-                const kalshiMarkets = await this.getKalshiMarkets(filters);
-                markets = markets.concat(kalshiMarkets);
+                promises.push(this.getKalshiMarkets(filters));
             }
 
             if (platform === 'all' || platform === 'polymarket') {
-                const polyMarkets = await this.getPolymarketMarkets(filters);
-                markets = markets.concat(polyMarkets);
+                promises.push(this.getPolymarketMarkets(filters));
             }
+
+            // Execute parallel API calls
+            const results = await Promise.all(promises);
+            let markets: NormalizedMarket[] = results.flat();
 
             // Apply filters
             markets = this.applyFilters(markets, filters);

@@ -19,9 +19,9 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   await app.listen(port);
 
-  logger.log(`🚀 PredictMax API running on http://localhost:${port}`);
-  logger.log(`📊 REST endpoints available at http://localhost:${port}/api`);
-  logger.log(`💬 WebSocket chat available at ws://localhost:${port}/chat`);
+  logger.log(` PredictMax API running on http://localhost:${port}`);
+  logger.log(` REST endpoints available at http://localhost:${port}/api`);
+  logger.log(` WebSocket chat available at ws://localhost:${port}/chat`);
 }
 
 bootstrap();

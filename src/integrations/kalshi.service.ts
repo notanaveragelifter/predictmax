@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
+import { HttpsAgent } from 'agentkeepalive';
 import { ConfigService } from '../config/config.service';
+import { CacheService } from '../common/cache.service';
 
 export interface KalshiMarket {
     ticker: string;
@@ -24,6 +26,7 @@ export interface KalshiMarket {
 
 export interface KalshiEvent {
     event_ticker: string;
+    series_ticker?: string;
     title: string;
     subtitle: string;
     category: string;
@@ -53,10 +56,25 @@ export class KalshiService {
     private readonly client: AxiosInstance;
     private readonly logger = new Logger(KalshiService.name);
     private readonly baseUrl = 'https://api.elections.kalshi.com/trade-api/v2';
+    private pendingRequests = new Map<string, Promise<any>>();
 
-    constructor(private configService: ConfigService) {
+    constructor(
+        private configService: ConfigService,
+        private cacheService: CacheService,
+    ) {
+        // HTTP connection pooling with keep-alive
+        const httpsAgent = new HttpsAgent({
+            keepAlive: true,
+            maxSockets: 50,
+            maxFreeSockets: 10,
+            timeout: 60000,
+            freeSocketTimeout: 30000,
+        });
+
         this.client = axios.create({
             baseURL: this.baseUrl,
+            timeout: 5000,
+            httpsAgent,
             headers: {
                 'Content-Type': 'application/json',
             },
@@ -192,28 +210,31 @@ export class KalshiService {
         }
     }
 
+    /**
+     * Batch fetch orderbooks in parallel
+     */
+    async getOrderbooksBatch(tickers: string[], depth = 10): Promise<Array<{ ticker: string; orderbook: KalshiOrderBook | null }>> {
+        return Promise.all(
+            tickers.map(async ticker => ({
+                ticker,
+                orderbook: await this.getOrderBook(ticker, depth),
+            }))
+        );
+    }
+
     // Convert Kalshi market to normalized format
     normalizeMarket(market: KalshiMarket) {
         return {
             platform: 'kalshi',
             marketId: market.ticker,
-            ticker: market.ticker,
             question: market.title,
             yesPrice: market.yes_bid,
             noPrice: market.no_bid,
-            yesBid: market.yes_bid,
-            yesAsk: market.yes_ask,
-            noBid: market.no_bid,
-            noAsk: market.no_ask,
-            lastPrice: market.last_price,
             volume: market.volume,
             volume24h: market.volume_24h,
-            openInterest: market.open_interest,
             endDate: market.expiration_time,
-            closeTime: market.close_time,
             category: market.category,
             status: market.status,
-            result: market.result,
         };
     }
 }
