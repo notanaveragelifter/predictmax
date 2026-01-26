@@ -24,6 +24,16 @@ export interface KalshiMarket {
     result?: string;
 }
 
+export interface KalshiTrade {
+    trade_id: string;
+    ticker: string;
+    yes_price: number;
+    no_price: number;
+    count: number;
+    taker_side: 'yes' | 'no';
+    created_time: string;
+}
+
 export interface KalshiEvent {
     event_ticker: string;
     series_ticker?: string;
@@ -73,7 +83,7 @@ export class KalshiService {
 
         this.client = axios.create({
             baseURL: this.baseUrl,
-            timeout: 5000,
+            timeout: 15000,
             httpsAgent,
             headers: {
                 'Content-Type': 'application/json',
@@ -96,14 +106,23 @@ export class KalshiService {
             if (filters.limit) params.append('limit', filters.limit.toString());
             if (filters.cursor) params.append('cursor', filters.cursor);
             if (filters.event_ticker) params.append('event_ticker', filters.event_ticker);
+            if (filters.series_ticker) params.append('series_ticker', filters.series_ticker);
             if (filters.status) params.append('status', filters.status);
+            if (filters.min_close_ts) params.append('min_close_ts', filters.min_close_ts.toString());
+            if (filters.max_close_ts) params.append('max_close_ts', filters.max_close_ts.toString());
+            if (filters.tickers?.length) params.append('tickers', filters.tickers.join(','));
+
+            this.logger.debug(`Fetching Kalshi markets with params: ${params.toString()}`);
 
             const response = await this.client.get('/markets', {
                 params,
                 headers: await this.getAuthHeaders(),
             });
 
-            return response.data.markets || [];
+            const markets = response.data.markets || [];
+            this.logger.debug(`Fetched ${markets.length} Kalshi markets`);
+
+            return markets;
         } catch (error) {
             this.logger.error('Failed to fetch Kalshi markets:', error);
             return [];
@@ -199,11 +218,44 @@ export class KalshiService {
         }
     }
 
+    async getTrades(params: {
+        ticker?: string;
+        limit?: number;
+        cursor?: string;
+        min_ts?: number;
+        max_ts?: number;
+    } = {}): Promise<KalshiTrade[]> {
+        try {
+            const url = params.ticker ? `/markets/${params.ticker}/trades` : '/markets/trades';
+            const queryParams = new URLSearchParams();
+            if (params.limit) queryParams.append('limit', params.limit.toString());
+            if (params.cursor) queryParams.append('cursor', params.cursor);
+            if (params.min_ts) queryParams.append('min_ts', params.min_ts.toString());
+            if (params.max_ts) queryParams.append('max_ts', params.max_ts.toString());
+
+            const response = await this.client.get(url, {
+                params: queryParams,
+                headers: await this.getAuthHeaders(),
+            });
+
+            return response.data.trades || [];
+        } catch (error) {
+            this.logger.error('Failed to fetch Kalshi trades:', error);
+            return [];
+        }
+    }
+
     async getTrendingMarkets(limit = 20): Promise<KalshiMarket[]> {
         try {
-            // Get open markets sorted by volume
-            const markets = await this.getMarkets({ limit, status: 'open' });
-            return markets.sort((a, b) => b.volume_24h - a.volume_24h);
+            // Get a larger set of open markets to ensure we find ones with volume
+            // Kalshi default limit is 100, we'll fetch 200 to be safe
+            const markets = await this.getMarkets({ limit: 200, status: 'open' });
+
+            // Sort by 24h volume descending
+            return markets
+                .filter(m => m.volume_24h > 0 || m.volume > 0)
+                .sort((a, b) => b.volume_24h - a.volume_24h)
+                .slice(0, limit);
         } catch (error) {
             this.logger.error('Failed to fetch trending markets:', error);
             return [];

@@ -4,9 +4,14 @@ import { ChatGateway } from './chat.gateway';
 import { ConversationService } from './conversation.service';
 import { MarketModule } from '../market/market.module';
 import { IntegrationsModule } from '../integrations/integrations.module';
+import { IntelligenceModule } from '../intelligence/intelligence.module';
 
 @Module({
-    imports: [forwardRef(() => MarketModule), IntegrationsModule],
+    imports: [
+        forwardRef(() => MarketModule),
+        IntegrationsModule,
+        IntelligenceModule,
+    ],
     providers: [AiService, ChatGateway, ConversationService],
     exports: [AiService, ConversationService],
 })

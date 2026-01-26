@@ -4,6 +4,9 @@ import { ConfigService } from '../config/config.service';
 import { ConversationService } from './conversation.service';
 import { PREDICTMAX_SYSTEM_PROMPT } from './prompts';
 import { PREDICTMAX_TOOLS, ToolInput } from './tools';
+import { ENHANCED_TOOLS, EnhancedToolInput } from '../intelligence/enhanced-tools';
+import { ENHANCED_SYSTEM_PROMPT } from '../intelligence/prompts';
+import { IntelligenceToolHandler } from '../intelligence/tool-handler.service';
 import { KalshiService } from '../integrations/kalshi.service';
 import { PolymarketService } from '../integrations/polymarket.service';
 import { MarketService } from '../market/market.service';
@@ -46,12 +49,16 @@ export class AiService {
     private readonly MAX_HISTORY_CHARS = 8000;
     private readonly MAX_TOOL_ITERATIONS = 3; // Limit tool call iterations
 
+    // Combined tools: base + enhanced
+    private readonly allTools = [...PREDICTMAX_TOOLS, ...ENHANCED_TOOLS];
+
     constructor(
         private configService: ConfigService,
         private conversationService: ConversationService,
         private kalshiService: KalshiService,
         private polymarketService: PolymarketService,
         private marketService: MarketService,
+        private intelligenceToolHandler: IntelligenceToolHandler,
     ) {
         this.anthropic = new Anthropic({
             apiKey: this.configService.anthropicApiKey,
@@ -273,22 +280,19 @@ export class AiService {
                 }
 
                 case 'get_kalshi_trades': {
-                    // Use getMarkets with ticker filter as proxy for trades (trades endpoint may require auth)
-                    const markets = await this.kalshiService.getMarkets({
+                    const trades = await this.kalshiService.getTrades({
+                        ticker: toolInput.ticker,
                         limit: toolInput.limit || 50,
-                        tickers: toolInput.ticker ? [toolInput.ticker] : undefined,
+                        cursor: toolInput.cursor,
+                        min_ts: toolInput.min_ts,
+                        max_ts: toolInput.max_ts,
                     });
                     result = {
                         platform: 'kalshi',
-                        endpoint: 'GET /markets/trades',
+                        endpoint: toolInput.ticker ? `GET /markets/${toolInput.ticker}/trades` : 'GET /markets/trades',
                         timestamp,
-                        note: 'Trade data requires authentication. Showing market data instead.',
-                        markets: markets.map(m => ({
-                            ticker: m.ticker,
-                            last_price: m.last_price,
-                            volume: m.volume,
-                            volume_24h: m.volume_24h,
-                        })),
+                        count: trades.length,
+                        trades,
                     };
                     break;
                 }
@@ -693,6 +697,15 @@ export class AiService {
                 }
 
                 default:
+                    // Check if it's an enhanced tool
+                    if (this.intelligenceToolHandler.isEnhancedTool(toolName)) {
+                        result = await this.intelligenceToolHandler.executeTool(
+                            toolName,
+                            toolInput as EnhancedToolInput
+                        );
+                        // Enhanced tools return formatted results
+                        return typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+                    }
                     result = { error: `Unknown tool: ${toolName}`, timestamp };
             }
 
@@ -742,12 +755,13 @@ export class AiService {
             messages = this.trimHistory(messages);
 
             // Tool calling loop with retry logic
+            // Use enhanced system prompt and combined tools
             let response = await this.callWithRetry(
                 () => this.anthropic.messages.create({
                     model: 'claude-sonnet-4-20250514',
                     max_tokens: 8192,
-                    system: PREDICTMAX_SYSTEM_PROMPT,
-                    tools: PREDICTMAX_TOOLS,
+                    system: ENHANCED_SYSTEM_PROMPT,
+                    tools: this.allTools,
                     messages,
                 }),
                 'initial chat request'
@@ -794,8 +808,8 @@ export class AiService {
                     () => this.anthropic.messages.create({
                         model: 'claude-sonnet-4-20250514',
                         max_tokens: 8192,
-                        system: PREDICTMAX_SYSTEM_PROMPT,
-                        tools: PREDICTMAX_TOOLS,
+                        system: ENHANCED_SYSTEM_PROMPT,
+                        tools: this.allTools,
                         messages,
                     }),
                     `tool iteration ${iterations}`
