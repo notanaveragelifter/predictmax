@@ -49,6 +49,12 @@ export class UnifiedMarketSearchService {
     async search(parsed: ParsedQuery, filters: SearchFilters): Promise<UnifiedMarket[]> {
         const { platform } = filters;
 
+        // Log which platforms we're actually querying
+        const platformsToQuery: string[] = [];
+        if (!platform || platform === 'kalshi') platformsToQuery.push('kalshi');
+        if (!platform || platform === 'polymarket') platformsToQuery.push('polymarket');
+        this.logger.log(`Searching platforms: [${platformsToQuery.join(', ')}] (filter platform: ${platform || 'not set'})`);
+
         try {
             // Fetch from platforms in parallel
             const promises: Promise<UnifiedMarket[]>[] = [];
@@ -616,24 +622,36 @@ export class UnifiedMarketSearchService {
     }
 
     /**
-     * Get trending markets across platforms
+     * Get trending markets from specified platform(s)
      */
-    async getTrendingMarkets(limit = 20): Promise<UnifiedMarket[]> {
-        const cacheKey = `trending_${limit}`;
+    async getTrendingMarkets(limit = 20, platform?: 'kalshi' | 'polymarket'): Promise<UnifiedMarket[]> {
+        const cacheKey = `trending_${limit}_${platform || 'both'}`;
+        this.logger.log(`Getting trending markets: limit=${limit}, platform=${platform || 'both'}`);
         
         return this.cacheService.wrap(
             cacheKey,
             60, // 1 minute cache (in seconds)
             async () => {
-                const [kalshiTrending, polyTrending] = await Promise.all([
-                    this.kalshiService.getTrendingMarkets(limit),
-                    this.polymarketService.getTrendingMarkets(limit),
-                ]);
+                const promises: Promise<UnifiedMarket[]>[] = [];
 
-                const markets = [
-                    ...kalshiTrending.map(m => this.normalizeKalshiMarket(m)),
-                    ...polyTrending.map(m => this.normalizePolymarketMarket(m)),
-                ];
+                if (!platform || platform === 'kalshi') {
+                    this.logger.debug(`Fetching Kalshi trending markets`);
+                    promises.push(
+                        this.kalshiService.getTrendingMarkets(limit)
+                            .then(markets => markets.map(m => this.normalizeKalshiMarket(m)))
+                    );
+                }
+
+                if (!platform || platform === 'polymarket') {
+                    this.logger.debug(`Fetching Polymarket trending markets`);
+                    promises.push(
+                        this.polymarketService.getTrendingMarkets(limit)
+                            .then(markets => markets.map(m => this.normalizePolymarketMarket(m)))
+                    );
+                }
+
+                const results = await Promise.all(promises);
+                const markets = results.flat();
 
                 // Sort by volume and return top N
                 return markets

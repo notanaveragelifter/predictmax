@@ -90,7 +90,7 @@ export class IntelligenceToolHandler {
             return { error: 'Query is required' };
         }
 
-        this.logger.debug(`Intelligent search for: "${query}" on ${platform}`);
+        this.logger.log(`Intelligent search: query="${query}", platform=${platform}, limit=${limit}`);
 
         // Parse the query
         const parsed = await this.queryIntelligence.parseQuery(query);
@@ -146,7 +146,7 @@ export class IntelligenceToolHandler {
     }
 
     /**
-     * Deep market analysis
+     * Deep market analysis - comprehensive with all probability models
      */
     private async handleDeepAnalysis(input: EnhancedToolInput): Promise<any> {
         const { platform, market_id, bankroll = 10000 } = input;
@@ -155,48 +155,147 @@ export class IntelligenceToolHandler {
             return { error: 'Platform and market_id are required' };
         }
 
+        this.logger.log(`Deep analysis: platform=${platform}, market_id=${market_id}`);
+
         // Get market
         let market = await this.marketSearch.getMarket(platform as 'kalshi' | 'polymarket', market_id);
         if (!market) {
-            return { error: 'Market not found' };
+            return { error: `Market ${market_id} not found on ${platform}` };
         }
 
-        // Enrich with sports intelligence if applicable
+        // Enrich with domain-specific intelligence
         if (market.category === 'sports') {
             market = await this.sportsIntelligence.enrichSportsMarket(market);
         }
 
-        // Generate recommendation
+        // Generate full recommendation with all models
         const recommendation = await this.recommendationEngine.generateRecommendation(market, bankroll);
 
-        // Generate markdown report
-        const report = this.reportGenerator.generateMarkdownReport(market, recommendation);
+        // Calculate days to expiry safely
+        let daysToExpiry = 0;
+        try {
+            const expTime = market.market.expirationTime;
+            if (expTime && !isNaN(expTime.getTime())) {
+                daysToExpiry = Math.ceil((expTime.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+            }
+        } catch (e) {
+            daysToExpiry = 30; // default
+        }
 
+        // Build comprehensive response with all data the AI needs
         return {
-            market: this.summarizeMarket(market),
+            // Market overview
+            market: {
+                id: market.id,
+                platform: market.platform,
+                question: market.question,
+                category: market.category,
+                subcategory: market.subcategory,
+                status: market.market.status,
+                expirationDate: market.market.expirationTime?.toISOString?.() || 'Unknown',
+                daysToExpiry,
+            },
+
+            // Current pricing
+            pricing: {
+                yesBid: (market.pricing.yesBid * 100).toFixed(1) + '%',
+                yesAsk: (market.pricing.yesAsk * 100).toFixed(1) + '%',
+                noBid: (market.pricing.noBid * 100).toFixed(1) + '%',
+                noAsk: (market.pricing.noAsk * 100).toFixed(1) + '%',
+                midpoint: (market.pricing.midpoint * 100).toFixed(1) + '%',
+                spread: (market.pricing.spread * 100).toFixed(2) + '%',
+                impliedProbability: (market.pricing.midpoint * 100).toFixed(1) + '%',
+            },
+
+            // Liquidity metrics
+            liquidity: {
+                volume24h: '$' + market.liquidity.volume24h.toLocaleString(),
+                totalVolume: '$' + market.liquidity.totalVolume.toLocaleString(),
+                openInterest: '$' + market.liquidity.openInterest.toLocaleString(),
+                score: market.liquidity.liquidityScore,
+                maxRecommendedPosition: '$' + Math.round(market.liquidity.volume24h * 0.05).toLocaleString(),
+                slippageEstimate: (market.pricing.spread / 2 * 100).toFixed(2) + '%',
+            },
+
+            // Probability analysis with all models
             analysis: {
                 fairValue: (recommendation.analysis.fairValue * 100).toFixed(1) + '%',
-                edge: (recommendation.edge > 0 ? '+' : '') + recommendation.edge.toFixed(1) + '%',
+                fairValueDecimal: recommendation.analysis.fairValue,
+                marketPrice: (market.pricing.midpoint * 100).toFixed(1) + '%',
+                edge: (recommendation.edge > 0 ? '+' : '') + recommendation.edge.toFixed(2) + '%',
+                edgeDecimal: recommendation.edge / 100,
                 confidence: (recommendation.confidence * 100).toFixed(0) + '%',
+                
+                // Detailed model breakdown
                 models: recommendation.analysis.models.map(m => ({
-                    name: m.name,
+                    name: m.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
                     probability: (m.probability * 100).toFixed(1) + '%',
+                    weight: (m.weight * 100).toFixed(0) + '%',
                     confidence: (m.confidence * 100).toFixed(0) + '%',
+                    breakdown: m.breakdown,
                 })),
             },
+
+            // Trade recommendation
             recommendation: {
                 action: recommendation.action,
                 side: recommendation.side,
-                sizing: recommendation.sizing,
-                timing: recommendation.timing,
+                confidence: (recommendation.confidence * 100).toFixed(0) + '%',
+                edge: (recommendation.edge > 0 ? '+' : '') + recommendation.edge.toFixed(2) + '%',
+                
+                // Position sizing
+                positionSizing: {
+                    recommended: '$' + recommendation.sizing.recommended.toLocaleString(),
+                    maximum: '$' + recommendation.sizing.maximum.toLocaleString(),
+                    conservativeUnit: '$' + recommendation.sizing.conservativeUnit.toLocaleString(),
+                },
+                
+                // Execution
+                execution: {
+                    entryPrice: (recommendation.pricing.targetEntry * 100).toFixed(1) + '%',
+                    limitPrice: (recommendation.pricing.limitPrice * 100).toFixed(1) + '%',
+                    stopLoss: recommendation.pricing.stopLoss ? (recommendation.pricing.stopLoss * 100).toFixed(1) + '%' : 'Not recommended',
+                    takeProfit: recommendation.pricing.takeProfit ? (recommendation.pricing.takeProfit * 100).toFixed(1) + '%' : 'Hold to resolution',
+                },
+                
+                // Timing
+                timing: {
+                    urgency: recommendation.timing.urgency,
+                    timeHorizon: recommendation.timing.timeHorizon,
+                    exitStrategy: recommendation.timing.exitStrategy,
+                },
+                
                 reasoning: recommendation.reasoning,
+                keyFactors: recommendation.keyFactors,
             },
+
+            // Risk assessment
             risk: {
-                overall: (recommendation.risk.overallRisk * 100).toFixed(0) + '%',
-                liquidity: recommendation.risk.liquidityRisk.level,
-                factors: recommendation.risk.riskFactors,
+                overallRisk: (recommendation.risk.overallRisk * 100).toFixed(0) + '%',
+                
+                liquidity: {
+                    level: recommendation.risk.liquidityRisk.level,
+                    score: recommendation.risk.liquidityRisk.score + '/10',
+                },
+                settlement: {
+                    level: recommendation.risk.settlementRisk.level,
+                    score: recommendation.risk.settlementRisk.score + '/10',
+                },
+                volatility: {
+                    level: recommendation.risk.volatilityRisk.level,
+                    score: recommendation.risk.volatilityRisk.score + '/10',
+                },
+                time: {
+                    level: recommendation.risk.timeRisk.level,
+                    score: recommendation.risk.timeRisk.score + '/10',
+                    daysToExpiry,
+                },
+                
+                riskFactors: recommendation.risk.riskFactors,
             },
-            report,
+
+            // Pre-formatted report (optional use)
+            formattedReport: this.reportGenerator.generateMarkdownReport(market, recommendation),
         };
     }
 
@@ -421,7 +520,10 @@ export class IntelligenceToolHandler {
     private async handleBestOpportunity(input: EnhancedToolInput): Promise<any> {
         const { category, platform = 'both', limit = 30, bankroll = 10000 } = input;
 
-        this.logger.debug(`Finding best opportunity: category=${category}, platform=${platform}`);
+        this.logger.log(`Finding best opportunity: category=${category}, platform=${platform}`);
+
+        // Determine the actual platform to query
+        const platformFilter = platform === 'both' ? undefined : platform as 'kalshi' | 'polymarket';
 
         // Get trending/active markets
         let markets: UnifiedMarket[];
@@ -429,11 +531,12 @@ export class IntelligenceToolHandler {
         if (category) {
             const parsed = await this.queryIntelligence.parseQuery(`${category} markets`);
             const filters = this.queryIntelligence.buildSearchFilters(parsed);
-            filters.platform = platform === 'both' ? undefined : platform as any;
+            filters.platform = platformFilter;
             filters.limit = limit;
             markets = await this.marketSearch.search(parsed, filters);
         } else {
-            markets = await this.marketSearch.getTrendingMarkets(limit);
+            // Use the platform filter for trending markets too
+            markets = await this.marketSearch.getTrendingMarkets(limit, platformFilter);
         }
 
         this.logger.debug(`Got ${markets.length} markets to analyze`);
