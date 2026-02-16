@@ -334,6 +334,52 @@ Options for format:
             required: ['platform', 'market_id'],
         },
     },
+
+    // ==================== LIVE SPORTS STREAM ====================
+    {
+        name: 'get_live_stream',
+        description: `Check if a sports market has a live game happening and find YouTube streams.
+Returns:
+- Live event details (score, period, teams)
+- YouTube live stream URL if available
+- Watch button data for UI
+
+Use this when analyzing sports markets to enhance the experience with live viewing.`,
+        input_schema: {
+            type: 'object' as const,
+            properties: {
+                platform: {
+                    type: 'string',
+                    enum: ['kalshi', 'polymarket'],
+                    description: 'The platform',
+                },
+                market_id: {
+                    type: 'string',
+                    description: 'Market identifier for a sports market',
+                },
+            },
+            required: ['platform', 'market_id'],
+        },
+    },
+
+    // ==================== GET LIVE GAMES ====================
+    {
+        name: 'get_live_games',
+        description: `Get all currently live games for a specific sport.
+Returns active games with scores, periods, and stream availability.
+Useful for: "What NFL games are on right now?" or "Show me live NBA games"`,
+        input_schema: {
+            type: 'object' as const,
+            properties: {
+                sport: {
+                    type: 'string',
+                    enum: ['nfl', 'nba', 'mlb', 'nhl', 'tennis', 'ufc', 'soccer'],
+                    description: 'Sport to check for live games',
+                },
+            },
+            required: ['sport'],
+        },
+    },
 ];
 
 // Tool input type definitions
@@ -359,4 +405,7 @@ export interface EnhancedToolInput {
     
     // Arbitrage options
     min_spread?: number;
+
+    // Live sports
+    sport?: 'nfl' | 'nba' | 'mlb' | 'nhl' | 'tennis' | 'ufc' | 'soccer';
 }

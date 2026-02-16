@@ -13,6 +13,8 @@ import { ProbabilityEngine } from './probability-engine.service';
 import { RiskAssessmentService } from './risk-assessment.service';
 import { RecommendationEngine } from './recommendation-engine.service';
 import { ReportGenerator } from './report-generator.service';
+import { SportsEventDetectorService, LiveSportsEvent } from '../integrations/sports-event-detector.service';
+import { YouTubeStreamFinderService, YouTubeStream } from '../integrations/youtube-stream-finder.service';
 import { EnhancedToolInput } from './enhanced-tools';
 import { UnifiedMarket } from './types';
 
@@ -28,6 +30,8 @@ export class IntelligenceToolHandler {
         private riskAssessment: RiskAssessmentService,
         private recommendationEngine: RecommendationEngine,
         private reportGenerator: ReportGenerator,
+        private sportsEventDetector: SportsEventDetectorService,
+        private youtubeStreamFinder: YouTubeStreamFinderService,
     ) {}
 
     /**
@@ -70,6 +74,12 @@ export class IntelligenceToolHandler {
 
                 case 'generate_report':
                     return this.handleGenerateReport(input);
+
+                case 'get_live_stream':
+                    return this.handleGetLiveStream(input);
+
+                case 'get_live_games':
+                    return this.handleGetLiveGames(input);
 
                 default:
                     throw new Error(`Unknown tool: ${toolName}`);
@@ -757,6 +767,139 @@ export class IntelligenceToolHandler {
     }
 
     /**
+     * Get live stream for a sports market
+     */
+    private async handleGetLiveStream(input: EnhancedToolInput): Promise<any> {
+        const { platform, market_id } = input;
+
+        if (!platform || !market_id) {
+            return { error: 'Platform and market_id are required' };
+        }
+
+        this.logger.log(`Checking live stream for market: ${platform}/${market_id}`);
+
+        // Get market
+        const market = await this.marketSearch.getMarket(platform as 'kalshi' | 'polymarket', market_id);
+        if (!market) {
+            return { error: 'Market not found' };
+        }
+
+        // Check if it's a sports market
+        if (market.category !== 'sports') {
+            return {
+                isLive: false,
+                message: `Market "${market.question.slice(0, 50)}..." is not a sports market`,
+                liveEvent: null,
+                liveStream: null,
+            };
+        }
+
+        // Detect live sports event
+        const liveEvent = await this.sportsEventDetector.detectLiveSportsEvent({
+            question: market.question,
+            category: market.category,
+        });
+
+        if (!liveEvent) {
+            return {
+                isLive: false,
+                message: 'No live or upcoming game detected for this market',
+                market: this.summarizeMarket(market),
+                liveEvent: null,
+                liveStream: null,
+            };
+        }
+
+        // Find YouTube stream
+        let liveStream: YouTubeStream | null = null;
+        if (liveEvent.isLive || liveEvent.status === 'UPCOMING') {
+            liveStream = await this.youtubeStreamFinder.findLiveStream(liveEvent);
+        }
+
+        return {
+            isLive: liveEvent.isLive,
+            market: this.summarizeMarket(market),
+            liveEvent: {
+                sport: liveEvent.sport,
+                league: liveEvent.league,
+                event: liveEvent.event,
+                teams: liveEvent.teams,
+                status: liveEvent.status,
+                startTime: liveEvent.startTime,
+                score: liveEvent.score,
+                venue: liveEvent.venue,
+                broadcast: liveEvent.broadcast,
+            },
+            liveStream: liveStream ? {
+                videoId: liveStream.videoId,
+                title: liveStream.title,
+                channelName: liveStream.channelName,
+                thumbnail: liveStream.thumbnail,
+                embedUrl: liveStream.embedUrl,
+                watchUrl: liveStream.watchUrl,
+                isLive: liveStream.isLive,
+                viewerCount: liveStream.viewerCount,
+            } : null,
+            message: liveEvent.isLive 
+                ? `🔴 LIVE: ${liveEvent.event}${liveStream ? ' - Stream available!' : ''}`
+                : `⏰ UPCOMING: ${liveEvent.event} starts soon`,
+        };
+    }
+
+    /**
+     * Get all live games for a sport
+     */
+    private async handleGetLiveGames(input: EnhancedToolInput): Promise<any> {
+        const { sport } = input;
+
+        if (!sport) {
+            return { error: 'Sport is required (nfl, nba, mlb, nhl, tennis, ufc, soccer)' };
+        }
+
+        this.logger.log(`Fetching live ${sport.toUpperCase()} games`);
+
+        const liveGames = await this.sportsEventDetector.getLiveGames(sport);
+
+        if (liveGames.length === 0) {
+            return {
+                sport: sport.toUpperCase(),
+                liveGames: [],
+                count: 0,
+                message: `No live ${sport.toUpperCase()} games right now`,
+            };
+        }
+
+        // Try to find streams for each live game
+        const gamesWithStreams = await Promise.all(
+            liveGames.slice(0, 5).map(async (game) => {
+                const stream = await this.youtubeStreamFinder.findLiveStream(game);
+                return {
+                    event: game.event,
+                    teams: game.teams,
+                    score: game.score,
+                    status: game.status,
+                    startTime: game.startTime,
+                    venue: game.venue,
+                    broadcast: game.broadcast,
+                    stream: stream ? {
+                        videoId: stream.videoId,
+                        title: stream.title,
+                        watchUrl: stream.watchUrl,
+                        viewerCount: stream.viewerCount,
+                    } : null,
+                };
+            })
+        );
+
+        return {
+            sport: sport.toUpperCase(),
+            liveGames: gamesWithStreams,
+            count: liveGames.length,
+            message: `Found ${liveGames.length} live ${sport.toUpperCase()} game(s)`,
+        };
+    }
+
+    /**
      * Helper to summarize market
      */
     private summarizeMarket(market: UnifiedMarket): any {
@@ -799,6 +942,8 @@ export class IntelligenceToolHandler {
             'quick_recommendation',
             'scan_category',
             'generate_report',
+            'get_live_stream',
+            'get_live_games',
         ];
         return enhancedTools.includes(toolName);
     }
