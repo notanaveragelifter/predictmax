@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { AiModule } from './ai/ai.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { MarketModule } from './market/market.module';
+import { IntelligenceModule } from './intelligence/intelligence.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { MarketModule } from './market/market.module';
     AiModule,
     IntegrationsModule,
     MarketModule,
+    IntelligenceModule,
   ],
   controllers: [AppController],
   providers: [AppService],

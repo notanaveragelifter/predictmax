@@ -4,6 +4,9 @@ import { ConfigService } from '../config/config.service';
 import { ConversationService } from './conversation.service';
 import { PREDICTMAX_SYSTEM_PROMPT } from './prompts';
 import { PREDICTMAX_TOOLS, ToolInput } from './tools';
+import { ENHANCED_TOOLS, EnhancedToolInput } from '../intelligence/enhanced-tools';
+import { ENHANCED_SYSTEM_PROMPT } from '../intelligence/prompts';
+import { IntelligenceToolHandler } from '../intelligence/tool-handler.service';
 import { KalshiService } from '../integrations/kalshi.service';
 import { PolymarketService } from '../integrations/polymarket.service';
 import { MarketService } from '../market/market.service';
@@ -46,12 +49,97 @@ export class AiService {
     private readonly MAX_HISTORY_CHARS = 8000;
     private readonly MAX_TOOL_ITERATIONS = 3; // Limit tool call iterations
 
+    // Combined tools: base + enhanced
+    private readonly allTools = [...PREDICTMAX_TOOLS, ...ENHANCED_TOOLS];
+
+    /**
+     * Detect platform preference from user message OR conversation history.
+     * This ensures we maintain context across the conversation.
+     */
+    private detectPlatformPreference(
+        message: string,
+        conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+    ): 'kalshi' | 'polymarket' | null {
+        const lower = message.toLowerCase();
+        const mentionsKalshi = lower.includes('kalshi');
+        const mentionsPoly = lower.includes('polymarket') || lower.includes('poly market') || lower.includes('polymkt');
+
+        // Current message takes priority
+        if (mentionsKalshi && mentionsPoly) return null;
+        if (mentionsKalshi) return 'kalshi';
+        if (mentionsPoly) return 'polymarket';
+
+        // Check recent conversation history for platform context
+        if (conversationHistory && conversationHistory.length > 0) {
+            // Look at the last 5 user messages for platform mentions
+            const recentUserMessages = conversationHistory
+                .filter(m => m.role === 'user')
+                .slice(-5);
+            
+            for (const msg of recentUserMessages.reverse()) {
+                const msgLower = msg.content.toLowerCase();
+                const hasKalshi = msgLower.includes('kalshi');
+                const hasPoly = msgLower.includes('polymarket') || msgLower.includes('poly market');
+                
+                if (hasKalshi && !hasPoly) return 'kalshi';
+                if (hasPoly && !hasKalshi) return 'polymarket';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Apply platform constraint to tool input when user specifies a platform.
+     * This ensures we ONLY query the platform the user asked about.
+     */
+    private applyPlatformConstraint(
+        toolName: string,
+        toolInput: ToolInput,
+        platformConstraint: 'kalshi' | 'polymarket' | null,
+    ): ToolInput {
+        if (!platformConstraint) return toolInput;
+
+        const constrainedInput = { ...toolInput } as ToolInput;
+
+        // ALWAYS inject platform into tools that support it
+        // This prevents accidental queries to the wrong platform
+        const platformSupportingTools = [
+            'get_trending_markets',
+            'discover_markets',
+            'analyze_market',
+            'compare_markets',
+            'intelligent_search',
+            'analyze_market_deep',
+            'find_best_opportunity',
+            'category_scan',
+        ];
+        
+        if (platformSupportingTools.includes(toolName)) {
+            constrainedInput.platform = platformConstraint;
+            this.logger.debug(`Injected platform ${platformConstraint} into ${toolName}`);
+        }
+
+        // Block platform-specific tools that don't match
+        if (platformConstraint === 'polymarket' && toolName.startsWith('get_kalshi_')) {
+            this.logger.warn(`Blocked ${toolName} - user requested polymarket`);
+            return { ...constrainedInput, platform: 'polymarket', _constraint_error: 'platform_mismatch' } as ToolInput;
+        }
+        if (platformConstraint === 'kalshi' && (toolName.startsWith('get_polymarket_') || toolName.startsWith('search_polymarket'))) {
+            this.logger.warn(`Blocked ${toolName} - user requested kalshi`);
+            return { ...constrainedInput, platform: 'kalshi', _constraint_error: 'platform_mismatch' } as ToolInput;
+        }
+
+        return constrainedInput;
+    }
+
     constructor(
         private configService: ConfigService,
         private conversationService: ConversationService,
         private kalshiService: KalshiService,
         private polymarketService: PolymarketService,
         private marketService: MarketService,
+        private intelligenceToolHandler: IntelligenceToolHandler,
     ) {
         this.anthropic = new Anthropic({
             apiKey: this.configService.anthropicApiKey,
@@ -207,24 +295,37 @@ export class AiService {
     /**
      * Execute a tool call and return the result
      */
-    private async executeTool(toolName: string, toolInput: ToolInput): Promise<string> {
-        this.logger.log(`Executing tool: ${toolName} with input: ${JSON.stringify(toolInput)}`);
+    private async executeTool(
+        toolName: string,
+        toolInput: ToolInput,
+        platformConstraint: 'kalshi' | 'polymarket' | null = null,
+    ): Promise<string> {
+        const constrainedInput = this.applyPlatformConstraint(toolName, toolInput, platformConstraint);
+        this.logger.log(`Executing tool: ${toolName} with input: ${JSON.stringify(constrainedInput)}`);
         const timestamp = new Date().toISOString();
 
         try {
+            if ((constrainedInput as any)._constraint_error === 'platform_mismatch') {
+                const requested = platformConstraint || 'the requested platform';
+                return JSON.stringify({
+                    error: `Platform mismatch: user requested ${requested}. Please use ${requested} tools.`,
+                    timestamp,
+                });
+            }
+
             let result: any;
             switch (toolName) {
                 // ==================== KALSHI MARKET TOOLS ====================
                 case 'get_kalshi_markets': {
                     const markets = await this.kalshiService.getMarkets({
-                        limit: toolInput.limit || 100,
-                        cursor: toolInput.cursor,
-                        status: toolInput.status as 'open' | 'closed' | 'settled',
-                        event_ticker: toolInput.event_ticker,
-                        series_ticker: toolInput.series_ticker,
-                        tickers: toolInput.tickers?.split(','),
-                        min_close_ts: toolInput.min_close_ts,
-                        max_close_ts: toolInput.max_close_ts,
+                        limit: constrainedInput.limit || 100,
+                        cursor: constrainedInput.cursor,
+                        status: constrainedInput.status as 'open' | 'closed' | 'settled',
+                        event_ticker: constrainedInput.event_ticker,
+                        series_ticker: constrainedInput.series_ticker,
+                        tickers: constrainedInput.tickers?.split(','),
+                        min_close_ts: constrainedInput.min_close_ts,
+                        max_close_ts: constrainedInput.max_close_ts,
                     });
                     result = {
                         platform: 'kalshi',
@@ -237,13 +338,13 @@ export class AiService {
                 }
 
                 case 'get_kalshi_market': {
-                    const market = await this.kalshiService.getMarket(toolInput.ticker!);
+                    const market = await this.kalshiService.getMarket(constrainedInput.ticker!);
                     if (!market) {
-                        result = { error: `Market ${toolInput.ticker} not found`, timestamp };
+                        result = { error: `Market ${constrainedInput.ticker} not found`, timestamp };
                     } else {
                         result = {
                             platform: 'kalshi',
-                            endpoint: `GET /markets/${toolInput.ticker}`,
+                            endpoint: `GET /markets/${constrainedInput.ticker}`,
                             timestamp,
                             market: this.kalshiService.normalizeMarket(market),
                             raw: market,
@@ -254,17 +355,17 @@ export class AiService {
 
                 case 'get_kalshi_orderbook': {
                     const orderbook = await this.kalshiService.getOrderBook(
-                        toolInput.ticker!,
-                        toolInput.depth || 10
+                        constrainedInput.ticker!,
+                        constrainedInput.depth || 10
                     );
                     if (!orderbook) {
-                        result = { error: `Order book for ${toolInput.ticker} not found`, timestamp };
+                        result = { error: `Order book for ${constrainedInput.ticker} not found`, timestamp };
                     } else {
                         result = {
                             platform: 'kalshi',
-                            endpoint: `GET /markets/${toolInput.ticker}/orderbook`,
+                            endpoint: `GET /markets/${constrainedInput.ticker}/orderbook`,
                             timestamp,
-                            ticker: toolInput.ticker,
+                            ticker: constrainedInput.ticker,
                             orderbook,
                             note: 'Prices in cents (0-100). Only bids shown; yes_bid + no_ask ≈ 100.',
                         };
@@ -273,37 +374,34 @@ export class AiService {
                 }
 
                 case 'get_kalshi_trades': {
-                    // Use getMarkets with ticker filter as proxy for trades (trades endpoint may require auth)
-                    const markets = await this.kalshiService.getMarkets({
-                        limit: toolInput.limit || 50,
-                        tickers: toolInput.ticker ? [toolInput.ticker] : undefined,
+                    const trades = await this.kalshiService.getTrades({
+                        ticker: constrainedInput.ticker,
+                        limit: constrainedInput.limit || 50,
+                        cursor: constrainedInput.cursor,
+                        min_ts: constrainedInput.min_ts,
+                        max_ts: constrainedInput.max_ts,
                     });
                     result = {
                         platform: 'kalshi',
-                        endpoint: 'GET /markets/trades',
+                        endpoint: constrainedInput.ticker ? `GET /markets/${constrainedInput.ticker}/trades` : 'GET /markets/trades',
                         timestamp,
-                        note: 'Trade data requires authentication. Showing market data instead.',
-                        markets: markets.map(m => ({
-                            ticker: m.ticker,
-                            last_price: m.last_price,
-                            volume: m.volume,
-                            volume_24h: m.volume_24h,
-                        })),
+                        count: trades.length,
+                        trades,
                     };
                     break;
                 }
 
                 case 'get_kalshi_market_history': {
                     const history = await this.kalshiService.getHistoricalPrices(
-                        toolInput.ticker!,
-                        toolInput.min_ts,
-                        toolInput.max_ts
+                        constrainedInput.ticker!,
+                        constrainedInput.min_ts,
+                        constrainedInput.max_ts
                     );
                     result = {
                         platform: 'kalshi',
-                        endpoint: `GET /markets/${toolInput.ticker}/history`,
+                        endpoint: `GET /markets/${constrainedInput.ticker}/history`,
                         timestamp,
-                        ticker: toolInput.ticker,
+                        ticker: constrainedInput.ticker,
                         data_points: history.length,
                         history,
                     };
@@ -313,8 +411,8 @@ export class AiService {
                 // ==================== KALSHI EVENT & SERIES TOOLS ====================
                 case 'get_kalshi_events': {
                     const events = await this.kalshiService.getEvents(
-                        toolInput.limit || 100,
-                        toolInput.status as 'open' | 'closed' | 'settled'
+                        constrainedInput.limit || 100,
+                        constrainedInput.status as 'open' | 'closed' | 'settled'
                     );
                     result = {
                         platform: 'kalshi',
@@ -327,13 +425,13 @@ export class AiService {
                 }
 
                 case 'get_kalshi_event': {
-                    const event = await this.kalshiService.getEvent(toolInput.event_ticker!);
+                    const event = await this.kalshiService.getEvent(constrainedInput.event_ticker!);
                     if (!event) {
-                        result = { error: `Event ${toolInput.event_ticker} not found`, timestamp };
+                        result = { error: `Event ${constrainedInput.event_ticker} not found`, timestamp };
                     } else {
                         result = {
                             platform: 'kalshi',
-                            endpoint: `GET /events/${toolInput.event_ticker}`,
+                            endpoint: `GET /events/${constrainedInput.event_ticker}`,
                             timestamp,
                             event,
                         };
@@ -343,7 +441,7 @@ export class AiService {
 
                 case 'get_kalshi_series': {
                     // Kalshi series endpoint - using events as proxy
-                    const events = await this.kalshiService.getEvents(toolInput.limit || 50);
+                    const events = await this.kalshiService.getEvents(constrainedInput.limit || 50);
                     // Extract unique series from events
                     const seriesSet = new Set<string>();
                     const seriesList = events.filter(e => {
@@ -369,16 +467,16 @@ export class AiService {
                 // ==================== POLYMARKET MARKET TOOLS ====================
                 case 'get_polymarket_markets': {
                     let markets;
-                    if (toolInput.category) {
+                    if (constrainedInput.category) {
                         markets = await this.polymarketService.getMarketsByCategory(
-                            toolInput.category,
-                            toolInput.limit || 50
+                            constrainedInput.category,
+                            constrainedInput.limit || 50
                         );
                     } else {
                         markets = await this.polymarketService.getMarkets(
-                            toolInput.limit || 100,
-                            toolInput.offset || 0,
-                            toolInput.active !== false
+                            constrainedInput.limit || 100,
+                            constrainedInput.offset || 0,
+                            constrainedInput.active !== false
                         );
                     }
                     result = {
@@ -392,13 +490,13 @@ export class AiService {
                 }
 
                 case 'get_polymarket_market': {
-                    const market = await this.polymarketService.getMarket(toolInput.id || toolInput.condition_id!);
+                    const market = await this.polymarketService.getMarket(constrainedInput.id || constrainedInput.condition_id!);
                     if (!market) {
-                        result = { error: `Market ${toolInput.id || toolInput.condition_id} not found`, timestamp };
+                        result = { error: `Market ${constrainedInput.id || constrainedInput.condition_id} not found`, timestamp };
                     } else {
                         result = {
                             platform: 'polymarket',
-                            endpoint: `GET /markets/${toolInput.id || toolInput.condition_id}`,
+                            endpoint: `GET /markets/${constrainedInput.id || constrainedInput.condition_id}`,
                             timestamp,
                             market: this.polymarketService.normalizeMarket(market),
                             raw: market,
@@ -410,9 +508,9 @@ export class AiService {
                 case 'get_polymarket_events': {
                     // Use markets endpoint grouped by event (Gamma API)
                     const markets = await this.polymarketService.getMarkets(
-                        toolInput.limit || 50,
-                        toolInput.offset || 0,
-                        toolInput.active !== false
+                        constrainedInput.limit || 50,
+                        constrainedInput.offset || 0,
+                        constrainedInput.active !== false
                     );
                     // Group markets by category as proxy for events
                     const eventsByCategory = new Map<string, any[]>();
@@ -439,13 +537,13 @@ export class AiService {
 
                 case 'get_polymarket_event': {
                     // Get market by ID/slug
-                    const market = await this.polymarketService.getMarket(toolInput.id!);
+                    const market = await this.polymarketService.getMarket(constrainedInput.id!);
                     if (!market) {
-                        result = { error: `Event/Market ${toolInput.id} not found`, timestamp };
+                        result = { error: `Event/Market ${constrainedInput.id} not found`, timestamp };
                     } else {
                         result = {
                             platform: 'polymarket',
-                            endpoint: `GET /events/${toolInput.id}`,
+                            endpoint: `GET /events/${constrainedInput.id}`,
                             timestamp,
                             event: this.polymarketService.normalizeMarket(market),
                         };
@@ -455,15 +553,15 @@ export class AiService {
 
                 // ==================== POLYMARKET CLOB TOOLS ====================
                 case 'get_polymarket_price': {
-                    const price = await this.polymarketService.getPrice(toolInput.token_id!);
+                    const price = await this.polymarketService.getPrice(constrainedInput.token_id!);
                     if (price === null) {
-                        result = { error: `Price for ${toolInput.token_id} not found`, timestamp };
+                        result = { error: `Price for ${constrainedInput.token_id} not found`, timestamp };
                     } else {
                         result = {
                             platform: 'polymarket',
                             endpoint: 'GET /price (CLOB API)',
                             timestamp,
-                            token_id: toolInput.token_id,
+                            token_id: constrainedInput.token_id,
                             price,
                             implied_probability: `${(price * 100).toFixed(1)}%`,
                         };
@@ -472,15 +570,15 @@ export class AiService {
                 }
 
                 case 'get_polymarket_orderbook': {
-                    const orderbook = await this.polymarketService.getOrderBook(toolInput.token_id!);
+                    const orderbook = await this.polymarketService.getOrderBook(constrainedInput.token_id!);
                     if (!orderbook) {
-                        result = { error: `Order book for ${toolInput.token_id} not found`, timestamp };
+                        result = { error: `Order book for ${constrainedInput.token_id} not found`, timestamp };
                     } else {
                         result = {
                             platform: 'polymarket',
                             endpoint: 'GET /book (CLOB API)',
                             timestamp,
-                            token_id: toolInput.token_id,
+                            token_id: constrainedInput.token_id,
                             orderbook,
                         };
                     }
@@ -488,9 +586,9 @@ export class AiService {
                 }
 
                 case 'get_polymarket_spread': {
-                    const orderbook = await this.polymarketService.getOrderBook(toolInput.token_id!);
+                    const orderbook = await this.polymarketService.getOrderBook(constrainedInput.token_id!);
                     if (!orderbook) {
-                        result = { error: `Spread for ${toolInput.token_id} not found`, timestamp };
+                        result = { error: `Spread for ${constrainedInput.token_id} not found`, timestamp };
                     } else {
                         const bestBid = orderbook.bids?.[0] ? parseFloat(orderbook.bids[0].price) : 0;
                         const bestAsk = orderbook.asks?.[0] ? parseFloat(orderbook.asks[0].price) : 1;
@@ -499,7 +597,7 @@ export class AiService {
                             platform: 'polymarket',
                             endpoint: 'GET /spread (CLOB API)',
                             timestamp,
-                            token_id: toolInput.token_id,
+                            token_id: constrainedInput.token_id,
                             best_bid: bestBid,
                             best_ask: bestAsk,
                             spread,
@@ -510,15 +608,15 @@ export class AiService {
                 }
 
                 case 'get_polymarket_midpoint': {
-                    const midpoint = await this.polymarketService.getMidpoint(toolInput.token_id!);
+                    const midpoint = await this.polymarketService.getMidpoint(constrainedInput.token_id!);
                     if (midpoint === null) {
-                        result = { error: `Midpoint for ${toolInput.token_id} not found`, timestamp };
+                        result = { error: `Midpoint for ${constrainedInput.token_id} not found`, timestamp };
                     } else {
                         result = {
                             platform: 'polymarket',
                             endpoint: 'GET /midpoint (CLOB API)',
                             timestamp,
-                            token_id: toolInput.token_id,
+                            token_id: constrainedInput.token_id,
                             midpoint,
                             implied_probability: `${(midpoint * 100).toFixed(1)}%`,
                         };
@@ -531,7 +629,7 @@ export class AiService {
                         platform: 'polymarket',
                         endpoint: 'GET /prices-history',
                         timestamp,
-                        market: toolInput.market,
+                        market: constrainedInput.market,
                         note: 'Historical price data endpoint. Use interval parameter (1m, 5m, 1h, 1d) for candlestick granularity.',
                         status: 'Endpoint available - implementation pending',
                     };
@@ -541,14 +639,14 @@ export class AiService {
                 // ==================== POLYMARKET DISCOVERY TOOLS ====================
                 case 'search_polymarket': {
                     const markets = await this.polymarketService.searchMarkets(
-                        toolInput.query!,
-                        toolInput.limit || 20
+                        constrainedInput.query!,
+                        constrainedInput.limit || 20
                     );
                     result = {
                         platform: 'polymarket',
                         endpoint: 'GET /search',
                         timestamp,
-                        query: toolInput.query,
+                        query: constrainedInput.query,
                         count: markets.length,
                         markets: markets.map(m => this.polymarketService.normalizeMarket(m)),
                     };
@@ -610,14 +708,26 @@ export class AiService {
 
                 // ==================== CROSS-PLATFORM TOOLS ====================
                 case 'get_trending_markets': {
-                    const markets = await this.marketService.getTrendingMarkets(toolInput.limit || 20);
-                    const filtered = toolInput.platform && toolInput.platform !== 'all'
-                        ? markets.filter(m => m.platform === toolInput.platform)
+                    const limit = constrainedInput.limit || 20;
+                    let markets;
+
+                    if (constrainedInput.platform === 'kalshi') {
+                        const kalshi = await this.kalshiService.getTrendingMarkets(limit);
+                        markets = kalshi.map((m) => this.kalshiService.normalizeMarket(m));
+                    } else if (constrainedInput.platform === 'polymarket') {
+                        const poly = await this.polymarketService.getTrendingMarkets(limit);
+                        markets = poly.map((m) => this.polymarketService.normalizeMarket(m));
+                    } else {
+                        markets = await this.marketService.getTrendingMarkets(limit);
+                    }
+
+                    const filtered = constrainedInput.platform && constrainedInput.platform !== 'all'
+                        ? markets.filter(m => m.platform === constrainedInput.platform)
                         : markets;
                     result = {
                         endpoint: 'Cross-platform trending',
                         timestamp,
-                        platform_filter: toolInput.platform || 'all',
+                        platform_filter: constrainedInput.platform || 'all',
                         count: filtered.length,
                         markets: filtered,
                     };
@@ -626,23 +736,23 @@ export class AiService {
 
                 case 'discover_markets': {
                     const markets = await this.marketService.discoverMarkets({
-                        platform: toolInput.platform as 'kalshi' | 'polymarket' | 'all',
-                        category: toolInput.category,
-                        searchQuery: toolInput.search_query,
-                        minVolume: toolInput.min_volume,
-                        minLiquidity: toolInput.min_liquidity,
-                        maxEndDate: toolInput.max_end_date ? new Date(toolInput.max_end_date) : undefined,
-                        minEndDate: toolInput.min_end_date ? new Date(toolInput.min_end_date) : undefined,
-                        limit: toolInput.limit || 30,
+                        platform: constrainedInput.platform as 'kalshi' | 'polymarket' | 'all',
+                        category: constrainedInput.category,
+                        searchQuery: constrainedInput.search_query,
+                        minVolume: constrainedInput.min_volume,
+                        minLiquidity: constrainedInput.min_liquidity,
+                        maxEndDate: constrainedInput.max_end_date ? new Date(constrainedInput.max_end_date) : undefined,
+                        minEndDate: constrainedInput.min_end_date ? new Date(constrainedInput.min_end_date) : undefined,
+                        limit: constrainedInput.limit || 30,
                     });
                     result = {
                         endpoint: 'Cross-platform discovery',
                         timestamp,
                         filters: {
-                            platform: toolInput.platform,
-                            category: toolInput.category,
-                            search_query: toolInput.search_query,
-                            min_volume: toolInput.min_volume,
+                            platform: constrainedInput.platform,
+                            category: constrainedInput.category,
+                            search_query: constrainedInput.search_query,
+                            min_volume: constrainedInput.min_volume,
                         },
                         count: markets.length,
                         markets,
@@ -652,18 +762,18 @@ export class AiService {
 
                 case 'analyze_market': {
                     const market = await this.marketService.getMarketDetails(
-                        toolInput.platform!,
-                        toolInput.market_id!
+                        constrainedInput.platform!,
+                        constrainedInput.market_id!
                     );
                     if (!market) {
-                        result = { error: `Market ${toolInput.market_id} not found on ${toolInput.platform}`, timestamp };
+                        result = { error: `Market ${constrainedInput.market_id} not found on ${constrainedInput.platform}`, timestamp };
                     } else {
                         const analysis = await this.marketService.analyzeOpportunity(market);
                         result = {
                             endpoint: 'Market analysis',
                             timestamp,
-                            platform: toolInput.platform,
-                            market_id: toolInput.market_id,
+                            platform: constrainedInput.platform,
+                            market_id: constrainedInput.market_id,
                             analysis,
                         };
                     }
@@ -671,11 +781,11 @@ export class AiService {
                 }
 
                 case 'compare_markets': {
-                    if (!toolInput.markets || toolInput.markets.length === 0) {
+                    if (!constrainedInput.markets || constrainedInput.markets.length === 0) {
                         result = { error: 'No markets provided for comparison', timestamp };
                     } else {
                         const comparisons = await Promise.all(
-                            toolInput.markets.map(async (m) => {
+                            constrainedInput.markets.map(async (m) => {
                                 const market = await this.marketService.getMarketDetails(m.platform, m.market_id);
                                 if (!market) return { platform: m.platform, market_id: m.market_id, error: 'Not found' };
                                 const analysis = await this.marketService.analyzeOpportunity(market);
@@ -693,6 +803,15 @@ export class AiService {
                 }
 
                 default:
+                    // Check if it's an enhanced tool
+                    if (this.intelligenceToolHandler.isEnhancedTool(toolName)) {
+                        result = await this.intelligenceToolHandler.executeTool(
+                            toolName,
+                            constrainedInput as EnhancedToolInput
+                        );
+                        // Enhanced tools return formatted results
+                        return typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+                    }
                     result = { error: `Unknown tool: ${toolName}`, timestamp };
             }
 
@@ -742,12 +861,41 @@ export class AiService {
             messages = this.trimHistory(messages);
 
             // Tool calling loop with retry logic
+            // Use enhanced system prompt and combined tools
+            // Detect platform with conversation context
+            const platformConstraint = this.detectPlatformPreference(message, history);
+            this.logger.log(`Platform constraint detected: ${platformConstraint || 'none'} (from message: "${message.slice(0, 50)}...")`);
+            
+            // Build a more intelligent system prompt with context awareness
+            let systemPrompt = ENHANCED_SYSTEM_PROMPT;
+            
+            if (platformConstraint) {
+                systemPrompt += `\n\n## CRITICAL PLATFORM CONSTRAINT
+The user is working with ${platformConstraint.toUpperCase()} ONLY.
+- Do NOT call any ${platformConstraint === 'kalshi' ? 'Polymarket' : 'Kalshi'} tools or APIs
+- Use ONLY ${platformConstraint} tools: ${platformConstraint === 'kalshi' ? 'get_kalshi_markets, get_kalshi_event, etc.' : 'get_polymarket_events, search_polymarket, etc.'}
+- If asked for trending/discover, pass platform: "${platformConstraint}" explicitly`;
+            }
+            
+            // Add context awareness instruction
+            systemPrompt += `\n\n## CONVERSATION CONTEXT
+This is turn ${messages.length + 1} of the conversation. Maintain context from previous messages.
+- If the user refers to "this market" or "that one", look at recent context to understand what they mean
+- Remember what markets/data you discussed previously
+- Build on previous analysis, don't start from scratch each time
+
+## CRITICAL: ALWAYS PROVIDE A REAL RESPONSE
+You MUST always provide a substantive, helpful response. NEVER leave the user hanging with just tool results.
+- After using tools, ALWAYS synthesize the results into a clear answer
+- If you're analyzing a market, give your opinion and recommendation
+- If data is missing or tools fail, explain what happened and suggest alternatives
+- Never respond with just "I have processed the data" - that is NOT acceptable`;
             let response = await this.callWithRetry(
                 () => this.anthropic.messages.create({
                     model: 'claude-sonnet-4-20250514',
                     max_tokens: 8192,
-                    system: PREDICTMAX_SYSTEM_PROMPT,
-                    tools: PREDICTMAX_TOOLS,
+                    system: systemPrompt,
+                    tools: this.allTools,
                     messages,
                 }),
                 'initial chat request'
@@ -766,11 +914,18 @@ export class AiService {
                 if (toolUseBlocks.length === 0) break;
 
                 this.logger.log(`Tool calling iteration ${iterations}: ${toolUseBlocks.length} tools`);
+                this.logger.debug(`Platform constraint: ${platformConstraint || 'none'}`);
+                toolUseBlocks.forEach(t => this.logger.debug(`  Tool: ${t.name}, Input: ${JSON.stringify(t.input)}`));
 
                 // Execute all tool calls in parallel
                 const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
                     toolUseBlocks.map(async (toolUse) => {
-                        const result = await this.executeTool(toolUse.name, toolUse.input as ToolInput);
+                        this.logger.log(`Executing ${toolUse.name} with platform constraint: ${platformConstraint || 'none'}`);
+                        const result = await this.executeTool(
+                            toolUse.name,
+                            toolUse.input as ToolInput,
+                            platformConstraint
+                        );
                         return {
                             type: 'tool_result' as const,
                             tool_use_id: toolUse.id,
@@ -794,8 +949,8 @@ export class AiService {
                     () => this.anthropic.messages.create({
                         model: 'claude-sonnet-4-20250514',
                         max_tokens: 8192,
-                        system: PREDICTMAX_SYSTEM_PROMPT,
-                        tools: PREDICTMAX_TOOLS,
+                        system: systemPrompt,
+                        tools: this.allTools,
                         messages,
                     }),
                     `tool iteration ${iterations}`
@@ -807,9 +962,32 @@ export class AiService {
             );
             let assistantMessage = textBlocks.map(b => b.text).join('\n');
 
-            // Fallback for empty assistant messages (e.g. only tool calls)
+            // If Claude only returned tool calls without a response, force a synthesis
             if (!assistantMessage || assistantMessage.trim().length === 0) {
-                assistantMessage = "I have processed the data from the prediction markets for you.";
+                this.logger.warn('Empty assistant response detected, requesting synthesis...');
+                
+                // Ask Claude to synthesize the results into a proper response
+                const synthesisResponse = await this.callWithRetry(
+                    () => this.anthropic.messages.create({
+                        model: 'claude-sonnet-4-20250514',
+                        max_tokens: 2048,
+                        system: `You are PredictMax, an AI prediction market analyst. The user asked a question and you gathered data using tools, but you forgot to provide an actual response. Based on the conversation, provide a helpful, conversational answer. Be specific and actionable. Never say "I have processed the data" - actually tell them what you found.`,
+                        messages: [
+                            ...messages.slice(-4), // Include recent context
+                            {
+                                role: 'user',
+                                content: 'Please provide a helpful response based on our conversation and the data you gathered. What did you find? What do you recommend?'
+                            }
+                        ],
+                    }),
+                    'synthesis request'
+                );
+                
+                const synthesisText = synthesisResponse.content.filter(
+                    (block): block is Anthropic.TextBlock => block.type === 'text'
+                );
+                assistantMessage = synthesisText.map(b => b.text).join('\n') || 
+                    "I encountered an issue gathering that information. Could you please rephrase your question or try asking about a specific market?";
             }
 
             // Store assistant response

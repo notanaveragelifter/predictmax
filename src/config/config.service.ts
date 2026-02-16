@@ -54,4 +54,14 @@ export class ConfigService {
     get isProduction(): boolean {
         return this.nodeEnv === 'production';
     }
+
+    // YouTube API Configuration
+    get youtubeApiKey(): string {
+        return this.configService.get<string>('YOUTUBE_API_KEY') || '';
+    }
+
+    // Generic getter for any env variable
+    get(key: string): string | undefined {
+        return this.configService.get<string>(key);
+    }
 }
