@@ -31,8 +31,12 @@ export class RecommendationEngine {
         private probabilityEngine: ProbabilityEngine,
         private riskAssessment: RiskAssessmentService,
     ) {
+        const apiKey = this.configService?.anthropicApiKey || '';
+        if (!apiKey) {
+            this.logger.warn('ANTHROPIC_API_KEY is missing. AI recommendations will fail at runtime.');
+        }
         this.anthropic = new Anthropic({
-            apiKey: this.configService.anthropicApiKey,
+            apiKey: apiKey || 'placeholder',
         });
     }
 
@@ -192,7 +196,7 @@ export class RecommendationEngine {
         const stopLoss = side === 'YES'
             ? Math.max(0.01, targetEntry - 0.15) // 15 cent stop
             : Math.max(0.01, targetEntry - 0.15);
-        
+
         const takeProfit = side === 'YES'
             ? Math.min(0.99, targetEntry + 0.20) // 20 cent target
             : Math.min(0.99, targetEntry + 0.20);

@@ -90,7 +90,11 @@ export class HeliusService {
     private readonly logger = new Logger(HeliusService.name);
 
     constructor(private configService: ConfigService) {
-        const apiKey = this.configService.heliusApiKey;
+        const apiKey = this.configService?.heliusApiKey || '';
+
+        if (!apiKey) {
+            this.logger.warn('HELIUS_API_KEY is missing. Solana blockchain data will be unavailable.');
+        }
 
         this.client = axios.create({
             baseURL: `https://api.helius.xyz/v0`,

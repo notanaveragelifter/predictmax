@@ -180,8 +180,12 @@ export class QueryIntelligenceService {
     private anthropic: Anthropic;
 
     constructor(private configService: ConfigService) {
+        const apiKey = this.configService?.anthropicApiKey || '';
+        if (!apiKey) {
+            this.logger.warn('ANTHROPIC_API_KEY is missing. Query intelligence will fail at runtime.');
+        }
         this.anthropic = new Anthropic({
-            apiKey: this.configService.anthropicApiKey,
+            apiKey: apiKey || 'placeholder',
         });
     }
 
@@ -216,12 +220,12 @@ export class QueryIntelligenceService {
 
             // Parse the JSON response
             const parsed = this.extractJSON(content.text);
-            
+
             // Normalize and validate
             return this.normalizeParsedQuery(query, parsed);
         } catch (error) {
             this.logger.error(`Failed to parse query: ${query}`, error);
-            
+
             // Return a basic parsed query as fallback
             return {
                 originalQuery: query,
@@ -237,13 +241,13 @@ export class QueryIntelligenceService {
      */
     private quickParse(query: string): ParsedQuery | null {
         const lowerQuery = query.toLowerCase();
-        
+
         // Tennis match pattern: "Player1 vs Player2"
         const vsMatch = lowerQuery.match(/(\w+)\s+(?:vs\.?|versus|v\.?)\s+(\w+)/i);
         if (vsMatch) {
             const player1 = this.normalizePlayerName(vsMatch[1]);
             const player2 = this.normalizePlayerName(vsMatch[2]);
-            
+
             // Check if these are known tennis players
             if (this.isTennisPlayer(vsMatch[1]) || this.isTennisPlayer(vsMatch[2])) {
                 return {
@@ -267,7 +271,7 @@ export class QueryIntelligenceService {
             if (cryptoMatch[2].toLowerCase().includes('k')) {
                 threshold *= 1000;
             }
-            
+
             return {
                 originalQuery: query,
                 intent: 'discovery',
@@ -327,7 +331,7 @@ export class QueryIntelligenceService {
      */
     private normalizeParsedQuery(originalQuery: string, parsed: any): ParsedQuery {
         // Normalize player names
-        const players = (parsed.players || []).map((p: string) => 
+        const players = (parsed.players || []).map((p: string) =>
             this.normalizePlayerName(p)
         );
 
@@ -338,7 +342,7 @@ export class QueryIntelligenceService {
                 type: parsed.timeframe.type || 'relative',
                 description: parsed.timeframe.description,
             };
-            
+
             // Parse dates if possible
             if (parsed.timeframe.description) {
                 const dates = this.parseTimeDescription(parsed.timeframe.description);
@@ -391,7 +395,7 @@ export class QueryIntelligenceService {
      */
     private detectTennisMatchType(player1: string, player2: string): string {
         const wtaPlayers = ['Iga Swiatek', 'Aryna Sabalenka', 'Coco Gauff', 'Elena Rybakina', 'Jessica Pegula'];
-        
+
         if (wtaPlayers.includes(player1) || wtaPlayers.includes(player2)) {
             return 'WTA';
         }
@@ -496,8 +500,8 @@ export class QueryIntelligenceService {
         // Month-specific (before March, by April, etc.)
         const monthMatch = lower.match(/(?:before|by|in)\s+(january|february|march|april|may|june|july|august|september|october|november|december)/i);
         if (monthMatch) {
-            const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 
-                              'july', 'august', 'september', 'october', 'november', 'december'];
+            const monthNames = ['january', 'february', 'march', 'april', 'may', 'june',
+                'july', 'august', 'september', 'october', 'november', 'december'];
             const monthIndex = monthNames.indexOf(monthMatch[1].toLowerCase());
             if (monthIndex !== -1) {
                 const end = new Date(now.getFullYear(), monthIndex, 1);

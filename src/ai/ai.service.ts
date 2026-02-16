@@ -75,12 +75,12 @@ export class AiService {
             const recentUserMessages = conversationHistory
                 .filter(m => m.role === 'user')
                 .slice(-5);
-            
+
             for (const msg of recentUserMessages.reverse()) {
                 const msgLower = msg.content.toLowerCase();
                 const hasKalshi = msgLower.includes('kalshi');
                 const hasPoly = msgLower.includes('polymarket') || msgLower.includes('poly market');
-                
+
                 if (hasKalshi && !hasPoly) return 'kalshi';
                 if (hasPoly && !hasKalshi) return 'polymarket';
             }
@@ -114,7 +114,7 @@ export class AiService {
             'find_best_opportunity',
             'category_scan',
         ];
-        
+
         if (platformSupportingTools.includes(toolName)) {
             constrainedInput.platform = platformConstraint;
             this.logger.debug(`Injected platform ${platformConstraint} into ${toolName}`);
@@ -141,8 +141,12 @@ export class AiService {
         private marketService: MarketService,
         private intelligenceToolHandler: IntelligenceToolHandler,
     ) {
+        const apiKey = this.configService?.anthropicApiKey || '';
+        if (!apiKey) {
+            this.logger.warn('ANTHROPIC_API_KEY is missing. AI functionality will fail at runtime.');
+        }
         this.anthropic = new Anthropic({
-            apiKey: this.configService.anthropicApiKey,
+            apiKey: apiKey || 'placeholder',
         });
     }
 
@@ -865,10 +869,10 @@ export class AiService {
             // Detect platform with conversation context
             const platformConstraint = this.detectPlatformPreference(message, history);
             this.logger.log(`Platform constraint detected: ${platformConstraint || 'none'} (from message: "${message.slice(0, 50)}...")`);
-            
+
             // Build a more intelligent system prompt with context awareness
             let systemPrompt = ENHANCED_SYSTEM_PROMPT;
-            
+
             if (platformConstraint) {
                 systemPrompt += `\n\n## CRITICAL PLATFORM CONSTRAINT
 The user is working with ${platformConstraint.toUpperCase()} ONLY.
@@ -876,7 +880,7 @@ The user is working with ${platformConstraint.toUpperCase()} ONLY.
 - Use ONLY ${platformConstraint} tools: ${platformConstraint === 'kalshi' ? 'get_kalshi_markets, get_kalshi_event, etc.' : 'get_polymarket_events, search_polymarket, etc.'}
 - If asked for trending/discover, pass platform: "${platformConstraint}" explicitly`;
             }
-            
+
             // Add context awareness instruction
             systemPrompt += `\n\n## CONVERSATION CONTEXT
 This is turn ${messages.length + 1} of the conversation. Maintain context from previous messages.
@@ -965,7 +969,7 @@ You MUST always provide a substantive, helpful response. NEVER leave the user ha
             // If Claude only returned tool calls without a response, force a synthesis
             if (!assistantMessage || assistantMessage.trim().length === 0) {
                 this.logger.warn('Empty assistant response detected, requesting synthesis...');
-                
+
                 // Ask Claude to synthesize the results into a proper response
                 const synthesisResponse = await this.callWithRetry(
                     () => this.anthropic.messages.create({
@@ -982,11 +986,11 @@ You MUST always provide a substantive, helpful response. NEVER leave the user ha
                     }),
                     'synthesis request'
                 );
-                
+
                 const synthesisText = synthesisResponse.content.filter(
                     (block): block is Anthropic.TextBlock => block.type === 'text'
                 );
-                assistantMessage = synthesisText.map(b => b.text).join('\n') || 
+                assistantMessage = synthesisText.map(b => b.text).join('\n') ||
                     "I encountered an issue gathering that information. Could you please rephrase your question or try asking about a specific market?";
             }
 

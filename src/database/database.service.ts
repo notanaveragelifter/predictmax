@@ -41,10 +41,19 @@ export class DatabaseService implements OnModuleInit {
     private readonly logger = new Logger(DatabaseService.name);
 
     constructor(private configService: ConfigService) {
-        this.supabase = createClient(
-            this.configService.supabaseUrl,
-            this.configService.supabaseAnonKey,
-        );
+        const url = this.configService?.supabaseUrl;
+        const key = this.configService?.supabaseAnonKey;
+
+        if (!url || !key) {
+            this.logger.warn('Supabase URL or Anon Key is missing. Database functionality will be disabled.');
+            // Create a dummy client that won't crash — methods will return null/empty
+            this.supabase = createClient(
+                url || 'https://placeholder.supabase.co',
+                key || 'placeholder-key',
+            );
+        } else {
+            this.supabase = createClient(url, key);
+        }
     }
 
     async onModuleInit() {
