@@ -5,6 +5,7 @@ import { ConversationService } from './conversation.service';
 import { MarketModule } from '../market/market.module';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { IntelligenceModule } from '../intelligence/intelligence.module';
+import { BetaKeyGuard } from './beta-key.guard';
 
 @Module({
     imports: [
@@ -12,7 +13,7 @@ import { IntelligenceModule } from '../intelligence/intelligence.module';
         IntegrationsModule,
         IntelligenceModule,
     ],
-    providers: [AiService, ChatGateway, ConversationService],
+    providers: [AiService, ChatGateway, ConversationService, BetaKeyGuard],
     exports: [AiService, ConversationService],
 })
 export class AiModule { }

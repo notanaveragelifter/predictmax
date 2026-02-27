@@ -19,6 +19,14 @@ export class ConfigService {
         return this.configService.get<string>('SUPABASE_ANON_KEY') || '';
     }
 
+    get supabaseServiceRoleKey(): string {
+        return this.configService.get<string>('SUPABASE_SERVICE_ROLE_KEY') || '';
+    }
+
+    get supabaseValidateKeyUrl(): string {
+        return this.configService.get<string>('SUPABASE_VALIDATE_KEY_URL') || '';
+    }
+
     // Kalshi Configuration
     get kalshiApiKey(): string {
         return this.configService.get<string>('KALSHI_API_KEY') || '';

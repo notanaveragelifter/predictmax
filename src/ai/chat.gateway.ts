@@ -7,11 +7,13 @@ import {
     OnGatewayConnection,
     OnGatewayDisconnect,
 } from '@nestjs/websockets';
-import { Logger, Inject, forwardRef } from '@nestjs/common';
+import { Logger, Inject, forwardRef, UseGuards } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { AiService } from './ai.service';
 import { ConversationService } from './conversation.service';
 import { MarketService } from '../market/market.service';
+import { BetaKeyGuard } from './beta-key.guard';
+import { BetaKeyService } from '../database/beta-key.service';
 
 interface ChatMessagePayload {
     content: string;
@@ -24,6 +26,7 @@ interface JoinConversationPayload {
     userId: string;
 }
 
+@UseGuards(BetaKeyGuard)
 @WebSocketGateway({
     cors: {
         origin: '*',
@@ -43,6 +46,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         private conversationService: ConversationService,
         @Inject(forwardRef(() => MarketService))
         private marketService: MarketService,
+        private betaKeyService: BetaKeyService,
     ) { }
 
     handleConnection(client: Socket) {
