@@ -47,66 +47,86 @@ Deno.serve(async (req: Request): Promise<Response> => {
         return json({ valid: false, reason: 'No key provided' }, 400);
     }
 
-    // RLS is disabled — anon key is sufficient for all reads and writes
-    const supabase = createClient(
-        Deno.env.get('SUPABASE_URL') ?? '',
-        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-    );
+    try {
+        // RLS is disabled — anon key is sufficient for all reads and writes
+        const supabase = createClient(
+            Deno.env.get('SUPABASE_URL') ?? '',
+            Deno.env.get('SB_ANON_KEY') ?? '',
+        );
 
-    // ── 1. Look up the key ────────────────────────────────────────────────────
-    const { data: betaKey, error: lookupError } = await supabase
-        .from('beta_keys')
-        .select('id, key, is_active, request_count, last_seen')
-        .eq('key', key)
-        .single<BetaKey>();
+        // ── 1. Look up the key ────────────────────────────────────────────────────
+        const { data: betaKey, error: lookupError } = await supabase
+            .from('beta_keys')
+            .select('id, key, is_active, request_count, last_seen')
+            .eq('key', key)
+            .single<BetaKey>();
 
-    if (lookupError || !betaKey) {
-        return json({ valid: false, reason: 'Invalid key' });
+        if (lookupError || !betaKey) {
+            console.log('Lookup error:', JSON.stringify(lookupError));
+            return json({ valid: false, reason: 'Invalid key' });
+        }
+
+        // ── 2. Check is_active ────────────────────────────────────────────────────
+        if (!betaKey.is_active) {
+            return json({ valid: false, reason: 'Key is not active' });
+        }
+
+        // ── 3. Check / update rate limit window ──────────────────────────────────
+        const now = new Date();
+
+        const { data: rl, error: rlError } = await supabase
+            .from('rate_limits')
+            .select('key, requests_today, window_start')
+            .eq('key', key)
+            .single<RateLimit>();
+
+        // If rate_limits table doesn't exist, skip rate limiting
+        if (rlError && rlError.code === 'PGRST205') {
+            console.log('rate_limits table not found, skipping rate limiting');
+            // Still update beta_keys
+            await supabase
+                .from('beta_keys')
+                .update({
+                    request_count: betaKey.request_count + 1,
+                    last_seen: now.toISOString(),
+                })
+                .eq('key', key);
+            return json({ valid: true });
+        }
+
+        const windowStart = rl ? new Date(rl.window_start) : now;
+        const windowExpired =
+            now.getTime() - windowStart.getTime() >= 24 * 60 * 60 * 1000;
+        const requestsToday = rl && !windowExpired ? rl.requests_today : 0;
+
+        if (requestsToday >= DAILY_REQUEST_LIMIT) {
+            return json({ valid: false, reason: 'Daily request limit reached' });
+        }
+
+        // ── 4. Upsert rate_limits ─────────────────────────────────────────────────
+        await supabase.from('rate_limits').upsert(
+            {
+                key,
+                requests_today: windowExpired ? 1 : requestsToday + 1,
+                window_start: windowExpired ? now.toISOString() : (rl?.window_start ?? now.toISOString()),
+            },
+            { onConflict: 'key' },
+        );
+
+        // ── 5. Update beta_keys (request_count + last_seen) ───────────────────────
+        await supabase
+            .from('beta_keys')
+            .update({
+                request_count: betaKey.request_count + 1,
+                last_seen: now.toISOString(),
+            })
+            .eq('key', key);
+
+        return json({ valid: true });
+    } catch (err) {
+        console.error('Unhandled error:', err);
+        return json({ valid: false, reason: 'Internal error' }, 500);
     }
-
-    // ── 2. Check is_active ────────────────────────────────────────────────────
-    if (!betaKey.is_active) {
-        return json({ valid: false, reason: 'Key is not active' });
-    }
-
-    // ── 3. Check / update rate limit window ──────────────────────────────────
-    const now = new Date();
-
-    const { data: rl } = await supabase
-        .from('rate_limits')
-        .select('key, requests_today, window_start')
-        .eq('key', key)
-        .single<RateLimit>();
-
-    const windowStart = rl ? new Date(rl.window_start) : now;
-    const windowExpired =
-        now.getTime() - windowStart.getTime() >= 24 * 60 * 60 * 1000;
-    const requestsToday = rl && !windowExpired ? rl.requests_today : 0;
-
-    if (requestsToday >= DAILY_REQUEST_LIMIT) {
-        return json({ valid: false, reason: 'Daily request limit reached' });
-    }
-
-    // ── 4. Upsert rate_limits ─────────────────────────────────────────────────
-    await supabase.from('rate_limits').upsert(
-        {
-            key,
-            requests_today: windowExpired ? 1 : requestsToday + 1,
-            window_start: windowExpired ? now.toISOString() : rl!.window_start,
-        },
-        { onConflict: 'key' },
-    );
-
-    // ── 5. Update beta_keys (request_count + last_seen) ───────────────────────
-    await supabase
-        .from('beta_keys')
-        .update({
-            request_count: betaKey.request_count + 1,
-            last_seen: now.toISOString(),
-        })
-        .eq('key', key);
-
-    return json({ valid: true });
 });
 
 function json(body: unknown, status = 200): Response {
